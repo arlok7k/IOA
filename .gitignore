@@ -1,0 +1,47 @@
+# IOA — Institute Outreach Automation
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environment
+.venv/
+venv/
+env/
+
+# C extensions
+*.so
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+*.egg
+IOA.exe
+IOA.spec
+
+# Local application data (user-specific — never commit)
+.env
+storage/database/ioa.db
+storage/backups/*.bak
+storage/backups/*.backup
+logs/*.log
+*.xlsx
+*.txt
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# OS
+Thumbs.db
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
