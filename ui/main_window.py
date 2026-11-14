@@ -20,12 +20,12 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Optional
 
-from PySide6.QtCore import Qt, QThread, QObject, Signal, Slot, QSize
-from PySide6.QtGui import QFont, QIcon, QAction
+from PySide6.QtCore import Qt, QThread, QObject, Signal, Slot, QTimer
+from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QStackedWidget,
     QListWidget, QListWidgetItem, QLabel, QFrame, QSplitter,
-    QMessageBox, QStatusBar, QApplication,
+    QMessageBox, QStatusBar, QApplication, QPushButton,
 )
 
 from config.settings import AppSettings
@@ -33,6 +33,9 @@ from data.database import Database
 from core.campaign_manager import CampaignManager
 from integrations.whatsapp.browser_manager import BrowserManager
 from integrations.telegram.bot import TelegramBot
+from ui.contacts_view import ContactsView
+from ui.campaign_view import CampaignView
+from ui.logs_view import LogsView
 
 
 class WorkerSignals(QObject):
@@ -79,24 +82,29 @@ class MainWindow(QMainWindow):
         self.resize(1200, 800)
 
         self._setup_font()
-        self._build_ui()
         self._apply_rtl(settings.language)
+        self._build_ui()
 
         # Status bar
         self.status_bar = QStatusBar()
         self.setStatusBar(self.status_bar)
-        self.status_bar.showMessage("جاري التحضير..." if settings.language == "ar" else "Ready")
+        self.status_bar.showMessage(
+            "جاري التحضير..." if settings.language == "ar" else "Ready"
+        )
 
         # Thread pool for background workers
         self._active_threads: list[QThread] = []
+
+        # Refresh dashboard periodically
+        self._refresh_timer = QTimer(self)
+        self._refresh_timer.timeout.connect(self.refresh_dashboard)
+        self._refresh_timer.start(5000)
 
     # ------------------------------------------------------------------ #
     # UI construction
     # ------------------------------------------------------------------ #
     def _setup_font(self) -> None:
         font = QFont("Segoe UI", 10)
-        if self.settings.language == "ar":
-            font = QFont("Segoe UI", 10)
         QApplication.setFont(font)
 
     def _apply_rtl(self, language: str) -> None:
@@ -156,15 +164,21 @@ class MainWindow(QMainWindow):
 
         # Stacked pages
         self.pages = QStackedWidget()
-        self.pages.addWidget(self._build_dashboard_page())
-        self.pages.addWidget(self._build_contacts_page())
-        self.pages.addWidget(self._build_campaigns_page())
-        self.pages.addWidget(self._build_template_page())
-        self.pages.addWidget(self._build_whatsapp_settings_page())
-        self.pages.addWidget(self._build_telegram_settings_page())
-        self.pages.addWidget(self._build_scheduler_page())
-        self.pages.addWidget(self._build_logs_page())
-        self.pages.addWidget(self._build_info_page())
+        self.pages.addWidget(self._build_dashboard_page())          # 0
+        self.contacts_view = ContactsView(self.database, self.campaign_manager)
+        self.pages.addWidget(self.contacts_view)                    # 1
+        self.campaign_view = CampaignView(self.database, self.campaign_manager)
+        self.pages.addWidget(self.campaign_view)                    # 2
+        self.pages.addWidget(self._build_template_page())           # 3
+        self.pages.addWidget(self._build_whatsapp_settings_page())  # 4
+        self.pages.addWidget(self._build_telegram_settings_page())  # 5
+        self.pages.addWidget(self._build_scheduler_page())          # 6
+        self.pages.addWidget(self.logs_view if hasattr(self, "logs_view")
+                             else LogsView(self.database))          # 7
+        # ensure logs_view reference
+        if not hasattr(self, "logs_view"):
+            self.logs_view = self.pages.widget(7)
+        self.pages.addWidget(self._build_info_page())               # 8
 
         root.addWidget(self.nav_list)
         root.addWidget(self.pages)
@@ -184,9 +198,17 @@ class MainWindow(QMainWindow):
             "whatsapp": 4, "telegram": 5, "scheduler": 6, "logs": 7, "info": 8,
         }
         self.pages.setCurrentIndex(index_map.get(key, 0))
+        if key == "contacts":
+            self.contacts_view.refresh()
+        elif key == "campaigns":
+            self.campaign_view.refresh()
+        elif key == "logs":
+            self.logs_view.refresh()
+        elif key == "dashboard":
+            self.refresh_dashboard()
 
     # ------------------------------------------------------------------ #
-    # Pages (placeholders wired to real modules progressively)
+    # Pages
     # ------------------------------------------------------------------ #
     def _section_header(self, title_ar: str, title_en: str) -> QWidget:
         frame = QFrame()
@@ -233,7 +255,6 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(page)
         layout.addWidget(self._section_header("لوحة التحكم", "Dashboard"))
 
-        # Stats cards row
         stats_row = QHBoxLayout()
         self.card_total = self._card("إجمالي المعاهد", "0", "Total institutes")
         self.card_pending = self._card("قيد الانتظار", "0", "Pending")
@@ -246,7 +267,6 @@ class MainWindow(QMainWindow):
             stats_row.addWidget(card)
         layout.addLayout(stats_row)
 
-        # Connection status
         conn_frame = QFrame()
         conn_frame.setStyleSheet("""
             QFrame {
@@ -268,31 +288,39 @@ class MainWindow(QMainWindow):
         layout.addStretch()
         return page
 
-    def _build_contacts_page(self) -> QWidget:
-        page = QWidget()
-        layout = QVBoxLayout(page)
-        layout.addWidget(self._section_header("جهات الاتصال", "Contacts"))
-        info = QLabel(
-            "عرض، بحث، تصفية، وتفتيش المعاهد من ملف Excel.\n"
-            "يتم تحميل البيانات من مجلد الإدخال المحدد في الإعدادات."
-        )
-        info.setStyleSheet("color: #6b7280; padding: 12px;")
-        layout.addWidget(info)
-        layout.addStretch()
-        return page
+    def refresh_dashboard(self) -> None:
+        cid = self.campaign_manager.active_campaign_id
+        if cid:
+            stats = self.campaign_manager.get_stats(cid)
+            self.card_total.findChild(QLabel).setText(str(stats.total))
+            # The value label is the second child; update directly by reference
+            self._set_card_value(self.card_total, str(stats.total))
+            self._set_card_value(self.card_pending, str(stats.pending))
+            self._set_card_value(self.card_awaiting, str(stats.awaiting_approval))
+            self._set_card_value(self.card_sent, str(stats.sent))
+            self._set_card_value(self.card_failed, str(stats.failed))
+            self._set_card_value(self.card_uncertain, str(stats.uncertain))
+        else:
+            for card in (self.card_total, self.card_pending, self.card_awaiting,
+                         self.card_sent, self.card_failed, self.card_uncertain):
+                self._set_card_value(card, "0")
 
-    def _build_campaigns_page(self) -> QWidget:
-        page = QWidget()
-        layout = QVBoxLayout(page)
-        layout.addWidget(self._section_header("الحملات", "Campaigns"))
-        info = QLabel(
-            "إنشاء، بدء، إيقاف، استئناف، ومراجعة الحملات.\n"
-            "كل حملة تتطلب موافقات فردية عبر تليجرام قبل الإرسال."
-        )
-        info.setStyleSheet("color: #6b7280; padding: 12px;")
-        layout.addWidget(info)
-        layout.addStretch()
-        return page
+        # Connection status
+        if self.browser_manager:
+            info = self.browser_manager.mock_connection_info()
+            self.lbl_whatsapp_status.setText(
+                f"واتساب: {info.state.value} | ملفي التعريف: Profile 40"
+            )
+            self.lbl_telegram_status.setText(
+                "تليجرام: " + ("مضبط" if self.telegram_bot and self.telegram_bot.token else "غير مضبط")
+            )
+
+    @staticmethod
+    def _set_card_value(card: QFrame, value: str) -> None:
+        for child in card.findChildren(QLabel):
+            if child.styleSheet() == "" or "font-size: 22px" in child.styleSheet():
+                child.setText(value)
+                break
 
     def _build_template_page(self) -> QWidget:
         page = QWidget()
@@ -304,8 +332,22 @@ class MainWindow(QMainWindow):
         )
         info.setStyleSheet("color: #6b7280; padding: 12px;")
         layout.addWidget(info)
+
+        btn_preview = QPushButton("معاينة قالب الرسالة")
+        btn_preview.clicked.connect(self._preview_template)
+        layout.addWidget(btn_preview)
+        self.lbl_preview = QLabel("")
+        self.lbl_preview.setStyleSheet("color: #374151; padding: 12px; background: #f3f4f6; border-radius: 6px;")
+        layout.addWidget(self.lbl_preview)
         layout.addStretch()
         return page
+
+    def _preview_template(self) -> None:
+        # Placeholder: actual template path comes from settings/input dir
+        self.lbl_preview.setText(
+            "القالب يُحمَّل من ملف TXT في مجلد الإدخال.\n"
+            "عنصر الاستبدال: {{institute_name}}"
+        )
 
     def _build_whatsapp_settings_page(self) -> QWidget:
         page = QWidget()
@@ -344,7 +386,8 @@ class MainWindow(QMainWindow):
         layout.addWidget(self._section_header("إعدادات تليجرام", "Telegram Settings"))
         info = QLabel(
             "توكن البوت ومعرف الدردشة المخول يُضبطان عبر ملف .env على الجهاز المحلي.\n"
-            "لا تُرمَّز الأسرار في الكود المصدر."
+            "لا تُرمَّز الأسرار في الكود المصدر.\n"
+            "الأوامر المدعومة: /start, /status, /pause, /resume, /next, /skip, /help"
         )
         info.setStyleSheet("color: #6b7280; padding: 12px;")
         layout.addWidget(info)
@@ -357,20 +400,9 @@ class MainWindow(QMainWindow):
         layout.addWidget(self._section_header("المجدول", "Scheduler"))
         info = QLabel(
             "ضبط التواريخ والأوقات والفواصل الزمنية وحدود التنفيذ.\n"
-            "جميع التوقيتات تستخدم منطقة زمنية Asia/Aden (عدن)."
-        )
-        info.setStyleSheet("color: #6b7280; padding: 12px;")
-        layout.addWidget(info)
-        layout.addStretch()
-        return page
-
-    def _build_logs_page(self) -> QWidget:
-        page = QWidget()
-        layout = QVBoxLayout(page)
-        layout.addWidget(self._section_header("سجلات الأنشطة", "Activity Logs"))
-        info = QLabel(
-            "عرض سجل الإرسال، الفشل، وأحداث النظام.\n"
-            "يتم حفظ السجلات محلياً في مجلد logs."
+            "جميع التوقيتات تستخدم منطقة زمنية Asia/Aden (عدن).\n"
+            "الفاصل الافتراضي بين الرسائل: 60 ثانية.\n"
+            "ساعات الإرسال المسموحة: 09:00–17:00."
         )
         info.setStyleSheet("color: #6b7280; padding: 12px;")
         layout.addWidget(info)
@@ -395,8 +427,7 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------ #
     # Helpers
     # ------------------------------------------------------------------ #
-    def _make_button(self, text: str, slot) -> QWidget:
-        from PySide6.QtWidgets import QPushButton
+    def _make_button(self, text: str, slot) -> QPushButton:
         btn = QPushButton(text)
         btn.setStyleSheet("""
             QPushButton {
@@ -418,7 +449,6 @@ class MainWindow(QMainWindow):
         return btn
 
     def _refresh_whatsapp_status(self) -> None:
-        """Refresh WhatsApp connection state in a background thread."""
         self.lbl_wp_state.setText("حالة الاتصال: جاري التحقق...")
         self._run_worker(self.browser_manager.connect, self._on_whatsapp_checked)
 
@@ -457,7 +487,6 @@ class MainWindow(QMainWindow):
             on_finished(result)
 
     def closeEvent(self, event) -> None:
-        # Stop background threads gracefully
         for thread in self._active_threads:
             thread.quit()
             thread.wait()
