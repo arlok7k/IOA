@@ -56,7 +56,7 @@ class ApprovalHandlers:
             if action == "approve":
                 await self._on_approve(update, query, parts)
             elif action == "schedule":
-                await self._on_schedule(update, query, parts)
+                await self._on_schedule(update, query, parts, context)
             elif action == "reject":
                 await self._on_reject(update, query, parts)
             elif action == "skip":
@@ -122,7 +122,7 @@ class ApprovalHandlers:
             send_request = self._build_send_request(contact, campaign, approval, template_content)
             if cm.message_sender:
                 response = cm.message_sender.send_approved(send_request)
-                if response.result in ("submitted", "delivered"):
+                if response.result.value in ("submitted", "delivered"):
                     contact.contact_status = "sent"
                     contact.is_contacted = True
                     self.db.upsert_contact(contact)
@@ -143,7 +143,9 @@ class ApprovalHandlers:
         else:
             await query.edit_message_text("تعذر العثور على المعهد أو الحملة.")
 
-    async def _on_schedule(self, update: Update, query, parts: list[str]) -> None:
+    async def _on_schedule(
+        self, update: Update, query, parts: list[str], context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
         # Callback format: schedule:<approval_id>
         if len(parts) < 2:
             await query.edit_message_text("معرف الموافقة غير صالح.")
@@ -155,17 +157,34 @@ class ApprovalHandlers:
             await query.edit_message_text("سجل الموافقة غير موجود.")
             return
 
-        # Ask the user for the desired date/time via a follow-up message.
-        # In this bot implementation we store a scheduling record pending user input.
+        # Validate approval is still pending and not expired
+        if approval.status != "pending":
+            await query.edit_message_text(f"لا يمكن جدولة هذه الموافقة — حالتها: {approval.status}.")
+            return
+        if approval.is_expired:
+            await query.edit_message_text("انتهت صلاحية الموافقة — لا يمكن جدولتها.")
+            return
+
+        # Store pending schedule context so the next text message from this
+        # chat is treated as the requested date/time.
+        chat_id = update.effective_chat.id if update.effective_chat else None
+        if chat_id is None:
+            await query.edit_message_text("تعذر تحديد الدردشة الحالية.")
+            return
+        context.user_data["pending_schedule_approval_id"] = approval_id
+        context.user_data["pending_schedule_chat_id"] = chat_id
+
         campaign = self.db.get_campaign(approval.campaign_id)
         contact = self.db.get_contact(approval.contact_id)
 
         await query.edit_message_text(
             "⏰ جدول الإرسال\n\n"
             f"المعهد: {contact.institute_name if contact else approval.institute_name}\n"
+            f"الهاتف: {contact.phone_original if contact else approval.phone_number}\n"
             f"الحملة: {approval.campaign_id}\n"
-            "يرجى إرسال التاريخ والوقت المرغوب به بال形式 YYYY-MM-DD HH:MM (توقيت عدن).\n"
-            "سيتم إرسال الرسالة في الوقت المحدد بعد التحقق من صلاحية الموافقة."
+            "يرجى إرسال التاريخ والوقت المرغوب به بالتنسيق YYYY-MM-DD HH:MM (توقيت عدن).\n"
+            "مثال: 2026-12-01 14:30\n"
+            "سيتم إرسال الرسالة في الوقت المحدد بعد التحقق من صلاحية الموافقة.\n"
         )
         # Store pending schedule context in user_data for the next message
         context = update.callback_query._chat_instance if hasattr(update.callback_query, '_chat_instance') else None
@@ -220,12 +239,10 @@ class ApprovalHandlers:
     # Helpers
     # ------------------------------------------------------------------ #
     def _template_for_campaign(self, campaign_id: str) -> str:
-        """Resolve template content for a campaign.
-
-        In the full UI, templates are stored per campaign. For now we return
-        an empty placeholder so the hash validation still runs against the
-        stored approval message_hash.
-        """
+        """Resolve template content for a campaign from the stored campaign."""
+        campaign = self.db.get_campaign(campaign_id)
+        if campaign and campaign.template_content:
+            return campaign.template_content
         return ""
 
     def _build_send_request(self, contact, campaign, approval, template_content: str):

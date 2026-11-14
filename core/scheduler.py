@@ -145,7 +145,7 @@ class Scheduler:
             request = self._build_send_request(contact, campaign, approval, template_content)
             response = self.message_sender.send_approved(request)
 
-            if response.result in ("submitted", "delivered"):
+            if response.result.value in ("submitted", "delivered"):
                 self.db.update_scheduling_status(record.id, "sent")
                 summary["sent"] += 1
             elif response.result == "failed":
@@ -165,7 +165,7 @@ class Scheduler:
         approval: object,
         template_content: str,
     ):
-        from core.message_sender import SendRequest
+        from integrations.whatsapp.message_sender import SendRequest
 
         return SendRequest(
             contact=contact,

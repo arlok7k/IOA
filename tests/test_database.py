@@ -122,3 +122,14 @@ def test_list_contacts_filter(db):
         db.upsert_contact(c)
     allc = db.list_contacts()
     assert len(allc) == 3
+
+def test_settings_default_input_directory_is_new_path():
+    from config.settings import DEFAULT_INPUT_DIRECTORY
+    assert DEFAULT_INPUT_DIRECTORY == r"C:\Users\USERW\Desktop\qoder_file_con\contect - Copy"
+
+
+def test_settings_profile40_path_unchanged():
+    from config.settings import CHROME_PROFILE_PATH, CHROME_USER_DATA_DIR, CHROME_PROFILE_DIRECTORY
+    assert CHROME_PROFILE_DIRECTORY == "Profile 40"
+    assert CHROME_USER_DATA_DIR == r"C:\Users\USERW\AppData\Local\Google\Chrome\User Data"
+    assert CHROME_PROFILE_PATH == r"C:\Users\USERW\AppData\Local\Google\Chrome\User Data\Profile 40"

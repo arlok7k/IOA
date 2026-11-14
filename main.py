@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from PySide6.QtCore import QCoreApplication, QLocale, QTranslator
+from PySide6.QtCore import QCoreApplication, QLocale
 from PySide6.QtWidgets import QApplication, QMessageBox
 
 from config.settings import AppSettings
@@ -92,7 +92,6 @@ def main() -> int:
     app.setApplicationVersion(settings.APP_VERSION)
 
     # RTL layout support for Arabic
-    translator = QTranslator()
     if settings.language == "ar":
         locale = QLocale(QLocale.Arabic, QLocale.SaudiArabia)
         QLocale.setDefault(locale)
@@ -105,7 +104,16 @@ def main() -> int:
         )
 
     # Initialize local SQLite database
-    db_path = ROOT / settings.storage.database_file
+    # Use app_data_dir if set (for Windows EXE runs where install dir may not be writable)
+    storage = settings.storage
+    if storage.app_data_dir:
+        db_path = Path(storage.app_data_dir) / "database" / "ioa.db"
+        backups_dir = Path(storage.app_data_dir) / "backups"
+        logs_dir = Path(storage.app_data_dir) / "logs"
+    else:
+        db_path = ROOT / storage.database_file
+        backups_dir = ROOT / storage.backups_dir
+        logs_dir = ROOT / storage.logs_dir
     db_path.parent.mkdir(parents=True, exist_ok=True)
     database = Database(str(db_path))
     database.initialize()

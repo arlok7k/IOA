@@ -30,7 +30,7 @@ CHROME_PROFILE_PATH: Final[str] = (
 # ---------------------------------------------------------------------------
 # Default input directory (Windows)
 # ---------------------------------------------------------------------------
-DEFAULT_INPUT_DIRECTORY: Final[str] = r"C:\Users\USERW\Desktop\contect - Copy"
+DEFAULT_INPUT_DIRECTORY: Final[str] = r"C:\Users\USERW\Desktop\qoder_file_con\contect - Copy"
 
 # ---------------------------------------------------------------------------
 # Default message placeholder (configurable)
@@ -63,6 +63,7 @@ class StoragePaths:
     database_file: str = "storage/database/ioa.db"
     backups_dir: str = "storage/backups"
     logs_dir: str = "logs"
+    app_data_dir: str = ""  # If set, overrides relative paths for Windows EXE runs
 
 
 # ---------------------------------------------------------------------------

@@ -82,3 +82,17 @@ def test_execution_success():
     assert res.success is True
     assert res.result == SendResult.SUBMITTED
     assert len(sender.calls) == 1
+
+def test_execution_skips_already_contacted_arabic_message():
+    # Regression test: message must be Arabic, not Korean text
+    db = FakeDB()
+    c = Contact(institute_name="معهد", phone_original="1", phone_normalized="+1",
+                contact_status=ContactStatus.SENT, is_contacted=True)
+    db.contacts[c.id] = c
+    em = ExecutionManager(db, FakeSender(), FakeApprovalManager())
+    res = em.execute_send(c, "camp", "مرحبا {{institute_name}}")
+    assert res.success is False
+    assert "تجاوز" in res.message
+    # Ensure no Korean characters leaked into the message
+    assert "통신ها" not in res.message
+    assert "تم التواصل" in res.message or "تجاوز" in res.message

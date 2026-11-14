@@ -60,7 +60,7 @@ class ExecutionManager:
                 institute_name=contact.institute_name,
                 success=False,
                 result="skipped",
-                message="المؤسسة تمت 통신ها مسبقاً — تم التجاوز.",
+                message="المؤسسة تم التواصل معها مسبقاً — تم التجاوز.",
             )
 
         # 2. Valid pending approval required

@@ -194,7 +194,12 @@ class TelegramBot:
             CallbackQueryHandler(self.approval_handlers.handle_callback)
         )
 
-        # Ignore unauthorized messages
+        # Text message handler for scheduling input (before the catch-all)
+        application.add_handler(
+            MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_text_message), group=0
+        )
+
+        # Ignore unauthorized messages (catch-all, last group)
         application.add_handler(
             MessageHandler(filters.ALL, self._ignore_unauthorized), group=99
         )
@@ -209,6 +214,74 @@ class TelegramBot:
         self._running = False
         if self._application:
             self._application.stop_running()
+
+    # ------------------------------------------------------------------ #
+    # Text message handler (for scheduling date/time input)
+    # ------------------------------------------------------------------ #
+    async def handle_text_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not self._is_authorized(update):
+            return
+
+        chat_id = update.effective_chat.id if update.effective_chat else None
+        user_data = context.user_data or {}
+
+        pending_approval_id = user_data.get("pending_schedule_approval_id")
+        pending_chat_id = user_data.get("pending_schedule_chat_id")
+
+        if pending_approval_id and pending_chat_id == chat_id:
+            # User is providing the date/time for scheduling
+            text = (update.effective_message.text or "").strip()
+            from datetime import datetime
+
+            try:
+                scheduled_dt = datetime.strptime(text, "%Y-%m-%d %H:%M")
+            except ValueError:
+                await update.effective_message.reply_text(
+                    "تنسيق التاريخ والوقت غير صحيح. يرجى استخدام YYYY-MM-DD HH:MM (توقيت عدن)."
+                )
+                return
+
+            scheduled_at = scheduled_dt.isoformat(timespec="seconds")
+
+            # Store scheduling record in SQLite
+            from data.models import SchedulingRecord
+            record = SchedulingRecord(
+                campaign_id="",  # will be resolved from approval
+                contact_id="",   # will be resolved from approval
+                scheduled_at=scheduled_at,
+                status="pending",
+                approval_id=pending_approval_id,
+            )
+            record_id = self.db.create_scheduling_record(record)
+
+            # Link the record to the approval's contact/campaign
+            approval = self.db.get_approval(pending_approval_id)
+            if approval:
+                # Update the scheduling record with correct contact/campaign
+                # We stored empty above; now fix via direct SQL update
+                import sqlite3
+                conn = self.db._get_connection()
+                conn.execute(
+                    "UPDATE scheduling_records SET campaign_id = ?, contact_id = ? WHERE id = ?",
+                    (approval.campaign_id, approval.contact_id, record_id),
+                )
+
+            # Clear pending state
+            user_data.pop("pending_schedule_approval_id", None)
+            user_data.pop("pending_schedule_chat_id", None)
+
+            await update.effective_message.reply_text(
+                "✅ تم حفظ جدولة الإرسال.\n\n"
+                f"الموافقة: {pending_approval_id[:8]}...\n"
+                f"الموعد المحدد: {scheduled_at}\n"
+                "سيتم إرسال الرسالة في الوقت المحدد بعد التحقق من صلاحية الموافقة."
+            )
+            return
+
+        # If not in scheduling state, ignore or show help
+        await update.effective_message.reply_text(
+            "أرسل أمراً من الأوامر المتاحة: /start, /status, /pause, /resume, /next, /skip, /help"
+        )
 
     # ------------------------------------------------------------------ #
     # Notification helpers (delegated)
