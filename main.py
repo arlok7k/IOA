@@ -65,7 +65,12 @@ def setup_logging(logs_dir: str = "logs") -> None:
 
 
 def load_settings() -> AppSettings:
-    """Load application settings from environment / .env."""
+    """Load application settings from environment / .env.
+
+    If IOA_APP_DATA_DIR is not set, default to the application root folder
+    so that the database, logs, and backups are stored inside the project
+    directory (C:\Users\USERW\Desktop\qoder_file_con\IOA) automatically.
+    """
     try:
         from dotenv import load_dotenv
 
@@ -74,7 +79,10 @@ def load_settings() -> AppSettings:
             load_dotenv(env_path)
     except Exception:  # pragma: no cover - python-dotenv optional in cloud
         pass
-    return AppSettings.from_env()
+    settings = AppSettings.from_env()
+    if not settings.storage.app_data_dir:
+        settings.storage.app_data_dir = str(ROOT)
+    return settings
 
 
 def main() -> int:

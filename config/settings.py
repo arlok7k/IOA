@@ -58,7 +58,7 @@ APP_DOMAIN: Final[str] = "ioa.local"
 # ---------------------------------------------------------------------------
 # Storage paths (local-first; relative to the application installation dir)
 # ---------------------------------------------------------------------------
-@dataclass(frozen=True)
+@dataclass
 class StoragePaths:
     database_file: str = "storage/database/ioa.db"
     backups_dir: str = "storage/backups"
